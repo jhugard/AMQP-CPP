@@ -12,6 +12,10 @@
 *.la
 *.a
 
+# Generated Protobufs
+*.pb.h
+*.pb.cc
+
 ## https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 ## Ignore Visual Studio temporary files, build results, and

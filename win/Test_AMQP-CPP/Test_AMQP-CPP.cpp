@@ -1,0 +1,281 @@
+// Test_AMQP-CPP.cpp : Defines the entry point for the console application.
+//
+
+#include "stdafx.h"
+
+#include <amqpcpp.h>
+
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+
+#include "TestMessages.pb.h"
+
+struct WinsockError: public std::runtime_error
+{
+	WinsockError(int ec, const std::string& msg)
+		:m_ec(ec), std::runtime_error(msg.c_str())
+	{}
+	int m_ec;
+};
+
+struct WinsockConnectionHandler : public AMQP::ConnectionHandler
+{
+private:
+	WSADATA	m_wsaData;
+	SOCKET  m_socket;
+	std::string m_buffer;
+
+public:
+
+	WinsockConnectionHandler(const std::string& host, const std::string& port)
+		:m_socket(INVALID_SOCKET)
+	{
+		int iResult = WSAStartup(MAKEWORD(2, 2), &m_wsaData);
+		if (0 != iResult)
+			throw WinsockError(iResult, "Unable to initialize Winsock");
+
+		// Resolve host address
+		struct addrinfo *result = nullptr, *ptr = nullptr, hints;
+		ZeroMemory(&hints, sizeof(hints));
+		hints.ai_family = AF_UNSPEC;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_protocol = IPPROTO_TCP;
+
+		iResult = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
+		if (0 != iResult)
+		{
+			WSACleanup();
+			throw WinsockError(iResult, "Unable to resolve hostname");
+		}
+
+		// Create socket
+		ptr = result;
+		m_socket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+
+		if (INVALID_SOCKET == m_socket)
+		{
+			WSACleanup();
+			throw WinsockError(WSAGetLastError(), "Failed to create socket");
+		}
+
+		// Try to connect to server on each returned address
+		for (; nullptr != ptr;  ptr=ptr->ai_next)
+		{
+			iResult = connect(m_socket, ptr->ai_addr, static_cast<int>(ptr->ai_addrlen));
+			if (0 == iResult)
+				break;
+		}
+
+		// Fail if unable to connect
+		if (0 != iResult)
+		{
+			int ec = WSAGetLastError();
+			if (INVALID_SOCKET != m_socket)
+			{
+				closesocket(m_socket);
+				m_socket = INVALID_SOCKET;
+			}
+			WSACleanup();
+			throw WinsockError(ec, "Failed to connect");
+		}
+	}
+
+	~WinsockConnectionHandler()
+	{
+		if (INVALID_SOCKET != m_socket)
+		{
+			shutdown(m_socket, SD_SEND);
+			closesocket(m_socket);
+			m_socket = INVALID_SOCKET;
+		}
+		WSACleanup();
+	}
+
+	// Process any data available on the socket
+	bool pump(AMQP::Connection* connection)
+	{
+		// While socket has received data
+		fd_set readfds;
+		FD_ZERO(&readfds);
+		FD_SET(m_socket, &readfds);
+
+		struct timeval timeout = { 0, 0 };
+
+		bool bPumped = false;
+
+		while (select(0, &readfds, nullptr, nullptr, &timeout) > 0)
+		{
+			// Read up to 16K of data
+			const size_t BUFSIZE = 16 * 1024;
+			char buf[BUFSIZE];
+			int cnt = recv(m_socket, buf, BUFSIZE, 0);
+
+			if (0 == cnt)
+				; // do nothing
+
+			else if (SOCKET_ERROR != cnt)
+			{
+				// Append new data to left over data
+				m_buffer.append(buf, cnt);
+				// Parse the whole thing
+				cnt = connection->parse(m_buffer.c_str(), m_buffer.size());
+				// Retain left over data
+				m_buffer = m_buffer.substr(cnt);
+
+				bPumped = true;
+			}
+			else
+				throw WinsockError(WSAGetLastError(), "failed to read data");
+		}
+		return bPumped;
+	}
+
+	/*--- ConnectionHandler Interface Methods ---*/
+
+	/**
+	*  Method that is called by the AMQP library every time it has data
+	*  available that should be sent to RabbitMQ.
+	*  @param  connection  pointer to the main connection object
+	*  @param  data        memory buffer with the data that should be sent to RabbitMQ
+	*  @param  size        size of the buffer
+	*/
+	virtual void onData(AMQP::Connection *connection, const char *data, size_t size)
+	{
+		if (size == 0)
+			return;
+
+		if (connection == nullptr || data == nullptr)
+			throw std::invalid_argument("connection and/or data cannot be null");
+
+		size_t sent = 0;
+		int iResult = 0;
+		do
+		{
+			data += iResult;
+			iResult = send(m_socket, data, static_cast<int>(size), 0);
+		} while (iResult != SOCKET_ERROR && (sent += iResult) < size);
+
+		if (SOCKET_ERROR == iResult)
+		{
+			throw WinsockError(WSAGetLastError(), "failed to send data");
+		}
+	}
+
+	/**
+	*  Method that is called by the AMQP library when the login attempt
+	*  succeeded. After this method has been called, the connection is ready
+	*  to use.
+	*  @param  connection      The connection that can now be used
+	*/
+	virtual void onConnected(AMQP::Connection *connection)
+	{
+		// @todo
+		//  add your own implementation, for example by creating a channel
+		//  instance, and start publishing or consuming
+
+		//todo: release a condition variable?
+	}
+
+	/**
+	*  Method that is called by the AMQP library when a fatal error occurs
+	*  on the connection, for example because data received from RabbitMQ
+	*  could not be recognized.
+	*  @param  connection      The connection on which the error occured
+	*  @param  message         A human readable error message
+	*/
+	virtual void onError(AMQP::Connection *connection, const char *message)
+	{
+		throw WinsockError(WSAGetLastError(), message);
+	}
+
+	/**
+	*  Method that is called when the connection was closed. This is the
+	*  counter part of a call to Connection::close() and it confirms that the
+	*  connection was correctly closed.
+	*
+	*  @param  connection      The connection that was closed and that is now unusable
+	*/
+	virtual void onClosed(AMQP::Connection *connection)
+	{
+	}
+
+};
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+
+	// create an instance of your own connection handler
+	const std::string RabbitMQPort = "5672";
+	WinsockConnectionHandler myHandler("dad-8", RabbitMQPort);
+
+	// Set to end the message loop
+	bool bDone = false;
+
+	// create a AMQP connection object
+	AMQP::Connection connection(&myHandler, AMQP::Login("james", "jamZhug0"), "/");
+
+	// and create a channel
+	AMQP::Channel channel(&connection);
+
+	AMQP::ErrorCallback errorFn = [&channel, &bDone](const char *msg){
+		std::cout << "Err: " << msg << std::endl;
+		bDone = true;
+	};
+	AMQP::FinalizeCallback nopFinalize = [](){};
+
+	channel.onError(errorFn);
+
+	channel
+		.onReady([&channel, &bDone](){
+			std::cout << "Channel is ready" << std::endl;
+		});
+
+	// use the channel object to call the AMQP method you like
+	channel.declareExchange("my-exchange", AMQP::fanout);
+	channel.declareQueue("my-queue");
+	channel.bindQueue("my-exchange", "my-queue", "my-routingkey");
+
+	// queue up some async requests
+	Test::Amqp::Hello msg;
+	msg.set_from("RabbitMQ");
+	msg.set_to("World!");
+	std::string s(msg.SerializeAsString());
+	channel.publish("my-exchange", "", s);
+
+	channel.get("my-queue")
+		.onMessage([&channel, &bDone](const AMQP::Message &message, uint64_t deliveryTag, bool redelivered) {
+			std::string s(message.body(), static_cast<unsigned int>(message.bodySize()));
+			Test::Amqp::Hello msg;
+			msg.ParseFromString(std::string(message.body(), static_cast<unsigned int>(message.bodySize())));
+			std::cout << "Recv: Hello " << msg.to() << " from " << msg.from() << std::endl;
+			channel.ack(deliveryTag);
+			bDone = true;
+			})
+		.onError([&bDone](const char* msg) {
+			std::cout << "Err: " << msg << std::endl;
+			bDone = true;
+			});
+
+	// event loop
+	while (!bDone)
+	{
+		// Process any data received on the connection
+		if (myHandler.pump(&connection))
+		{
+			// Process any pending work on the channel
+			channel.consume("my-queue");
+		}
+		else
+		{
+#if defined(_WIN32)
+			::Sleep(50);
+#else
+			_sleep(50);
+#endif
+		}
+	}
+
+	return 0;
+}
+

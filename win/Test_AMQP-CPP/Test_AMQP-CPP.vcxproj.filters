@@ -30,6 +30,12 @@
     <ClInclude Include="TestMessages.pb.h">
       <Filter>Protobuf</Filter>
     </ClInclude>
+    <ClInclude Include="WinsockConnectionHandler.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Formatter.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">

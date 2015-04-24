@@ -161,15 +161,28 @@ public:
 		if (connection == nullptr || data == nullptr)
 			throw std::invalid_argument("connection and/or data cannot be null");
 
-		size_t sent = 0;
-		int iResult = 0;
-		do
-		{
-			data += iResult;
-			iResult = send(m_socket, data, static_cast<int>(size), 0);
-		} while (iResult != SOCKET_ERROR && (sent += iResult) < size);
+		// While socket has received data
+		fd_set writefds;
+		FD_ZERO(&writefds);
+		FD_SET(m_socket, &writefds);
+		struct timeval timeout = { 15, 0 };
 
-		if (SOCKET_ERROR == iResult)
+		size_t totalSent = 0;
+		int sent = 0;
+
+
+		while (sent > SOCKET_ERROR && (totalSent < size))
+		{
+			if (select(0, nullptr, &writefds, nullptr, &timeout) == 0)
+			{
+				throw WinsockError(WSAETIMEDOUT, "failed to write data");
+			}
+
+			sent = send(m_socket, &data[totalSent], static_cast<int>(size), 0);
+			totalSent += sent;
+		}
+
+		if (SOCKET_ERROR == sent)
 		{
 			throw WinsockError(WSAGetLastError(), "failed to send data");
 		}

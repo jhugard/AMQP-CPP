@@ -58,21 +58,28 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	// Get the message we just sent
 	channel.get("my-queue")
-		.onMessage([&channel, &bDone](const AMQP::Message &message, uint64_t deliveryTag, bool redelivered) {
+		.onMessage([&channel, &bDone](const AMQP::Message &message, uint64_t deliveryTag, bool redelivered)
+		{
 			std::string s(message.body(), static_cast<unsigned int>(message.bodySize()));
 			Test::Amqp::Hello msg;
 			msg.ParseFromString(std::string(message.body(), static_cast<unsigned int>(message.bodySize())));
-			std::cout << "Recv: Hello " << msg.to() << " from " << msg.from() << std::endl;
+			std::cout << "Recv: Hello " << msg.to() << " from " << msg.from() << (redelivered ? " (redelivered)" : "") << std::endl;
 
 			//BUG? This ack does not remove the message from the queue
 			channel.ack(deliveryTag);
 			
 			bDone = true;
-			})
-		.onError([&bDone](const char* msg) {
+		})
+		.onEmpty([&channel, &bDone](void)
+		{
+			std::cerr << "Unexpected empty queue" << std::endl;
+			bDone = true;
+		})
+		.onError([&bDone](const char* msg)
+		{
 			std::cout << "Err: " << msg << std::endl;
 			bDone = true;
-			});
+		});
 
 	// event loop
 	while (!bDone)

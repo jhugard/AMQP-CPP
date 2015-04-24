@@ -109,8 +109,8 @@
       <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Compiling Protobuf</Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">"$(ProjectDir)proto/protoc.exe" --error_format=msvs --proto_path=$(ProjectDir)proto --cpp_out=$(ProjectDir) "%(FullPath)"</Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">"$(ProjectDir)proto/protoc.exe" --error_format=msvs --proto_path=$(ProjectDir)proto --cpp_out=$(ProjectDir) "%(FullPath)"</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(IntDir)%(Filename).pb.h;$(IntDir)%(Filename).pb.cc</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(IntDir)%(Filename).pb.h;$(IntDir)%(Filename).pb.cc</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(ProjectDir)%(Filename).pb.h;$(ProjectDir)%(Filename).pb.cc</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(ProjectDir)%(Filename).pb.h;$(ProjectDir)%(Filename).pb.cc</Outputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
